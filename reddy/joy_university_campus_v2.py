@@ -1,0 +1,1242 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+JOY UNIVERSITY - 3D SMART CAMPUS v2  (ONE complete file, no patching)
+RUN:   pip install pypdf pillow
+       put this file + your photos PDF (reddy.pdf) in the SAME folder
+       python joy_university_campus_v2.py          -> opens http://127.0.0.1:8000
+       python joy_university_campus_v2.py --lan    -> phones on same Wi-Fi
+       python joy_university_campus_v2.py --export -> index.html (+photos/) for Netlify / GitHub Pages (online)
+"""
+import io, sys, socket, threading, webbrowser
+from pathlib import Path
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+HERE = Path(__file__).resolve().parent
+PHOTOS = HERE / "photos"
+
+
+def _save(data, n):
+    out = PHOTOS / f"photo_{n:02d}.jpg"
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+        im.thumbnail((1600, 1600))
+        im.save(out, "JPEG", quality=85)
+    except Exception:
+        out.write_bytes(data)
+
+
+def create_placeholder_photos():
+    """Generates procedural high-res campus photo cards and official map diagram if PDF is missing."""
+    PHOTOS.mkdir(exist_ok=True)
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("[!] PIL not available for generating static fallbacks (browser JS fallback will be used).")
+        return
+
+    titles = [
+        "Gino Block with Entrance Sign", "JU Arena Main Hall", "Aircraft Display Lawn", "We Trust in God Plaza",
+        "Aeronautical Display Block", "Gino Block Front Façade", "Arul Block & SAC Skyline", "Volleyball Court & Turbines",
+        "Basketball Court", "Arul Block Lawn", "Joe Block NEC AI Lab", "Soosai Block Nursing", "Ignites Passion Mural",
+        "Soosai-B Block Façade", "SAC Entrance & Domes", "Joy University Signage", "Logo Wall Plaza", "SAC Dome View",
+        "Joe Eiffel Tower Block", "Cricket Field Oval", "Maintenance Block", "SAC Recreation Hub", "Manickam Academic Block",
+        "Football Turf", "JU Arena Wave Front", "Campus Aerial Panorama", "Hostel Residency", "Joy University Official Campus Map"
+    ]
+
+    for idx, t in enumerate(titles):
+        out = PHOTOS / f"photo_{idx:02d}.jpg"
+        if out.exists():
+            continue
+        im = Image.new("RGB", (1200, 750), color=(11, 28, 43))
+        draw = ImageDraw.Draw(im)
+        
+        if idx == 27:  # Official Campus Map Diagram
+            draw.rectangle([30, 30, 1170, 720], outline=(94, 234, 212), width=4)
+            draw.text((60, 60), "JOY UNIVERSITY - OFFICIAL CAMPUS MAP", fill=(251, 191, 36))
+            draw.text((60, 100), "Raja Nagar, Vadakangulam, Tirunelveli - 627116", fill=(168, 187, 202))
+            
+            blocks = [
+                (100, 160, 300, 260, (59, 130, 246), "1. Admin Block"),
+                (330, 160, 550, 260, (96, 165, 250), "2. Gino Block"),
+                (580, 160, 780, 260, (56, 189, 248), "13. Joe Block AI Lab"),
+                (810, 160, 1100, 270, (239, 68, 68), "21. Student Activity Centre"),
+                (100, 300, 400, 480, (34, 197, 94), "18. Cricket Oval"),
+                (430, 300, 750, 480, (16, 185, 129), "23. Football Turf"),
+                (780, 300, 1100, 500, (168, 85, 247), "24. JU Arena"),
+                (100, 520, 350, 680, (236, 72, 153), "Hostels (A - D)"),
+                (380, 520, 650, 680, (244, 63, 94), "Hostels (E - F)"),
+                (680, 520, 1100, 680, (234, 179, 8), "Parking & Services (28-32)")
+            ]
+            for x1, y1, x2, y2, color, lbl in blocks:
+                draw.rectangle([x1, y1, x2, y2], fill=color, outline=(255, 255, 255), width=2)
+                draw.text((x1 + 15, y1 + (y2 - y1) // 2 - 10), lbl, fill=(255, 255, 255))
+        else:
+            draw.rectangle([0, 0, 1200, 750], fill=(11, 28, 43))
+            draw.ellipse([500, 200, 700, 400], fill=(94, 234, 212, 40), outline=(94, 234, 212), width=3)
+            draw.text((560, 270), f"#{idx:02d}", fill=(94, 234, 212))
+            draw.text((100, 480), t, fill=(255, 255, 255))
+            draw.text((100, 540), "Joy University 3D Smart Campus • Vadakangulam", fill=(168, 187, 202))
+        
+        im.save(out, "JPEG", quality=85)
+
+
+def extract_photos():
+    PHOTOS.mkdir(exist_ok=True)
+    pdfs = sorted(HERE.glob("*.pdf"))
+    if not pdfs:
+        print("[!] No PDF next to this script -> generating procedural campus photo fallbacks.")
+        create_placeholder_photos()
+        return True
+    print(f"[+] Extracting photos from {pdfs[0].name} ...")
+    n = 0
+    try:
+        from pypdf import PdfReader
+        for page in PdfReader(str(pdfs[0])).pages:
+            for img in page.images:
+                _save(img.data, n)
+                n += 1
+    except ImportError:
+        try:
+            import fitz
+            doc = fitz.open(str(pdfs[0]))
+            for page in doc:
+                for x in page.get_images(full=True):
+                    _save(doc.extract_image(x[0])["image"], n)
+                    n += 1
+        except ImportError:
+            print("[!] Run:  pip install pypdf pillow")
+            create_placeholder_photos()
+            return False
+    print(f"[+] {n} photos extracted successfully.")
+    create_placeholder_photos()
+    return n > 0
+
+
+HTML = r'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Joy University • 3D Smart Campus</title>
+<style>
+:root{--bg:#06121d;--panel:#0b1c2bd9;--line:#ffffff1c;--text:#f6fbff;--muted:#a8bbca;--a:#5eead4;--b:#60a5fa;--y:#fbbf24;--green:#22c55e;--red:#ef4444;--purple:#a855f7}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+.glass{background:var(--panel);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:18px;box-shadow:0 20px 60px #0007}
+button{font:inherit;cursor:pointer;color:var(--text);background:#ffffff10;border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;transition:all .2s ease}
+button:hover{background:#ffffff22;transform:translateY(-1px)}button:active{transform:translateY(0)}
+button.on,.pri{background:linear-gradient(135deg,var(--a),var(--b));color:#03101a;border:0;box-shadow:0 4px 14px #5eead440}
+button.sec{background:#ffffff18;border-color:var(--line)}button.danger{background:#ef444422;color:#fca5a5;border-color:#ef444444}
+#top{position:fixed;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;pointer-events:none;z-index:30}#top>*{pointer-events:auto}
+.brand{display:flex;align-items:center;gap:10px;padding:8px 14px}.mark{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--a),var(--b));display:grid;place-items:center;color:#03101a;font-weight:900;font-size:16px}
+.brand b{display:block;font-size:15px}.brand small{color:var(--muted);font-size:11px}
+#topRight{display:flex;align-items:center;gap:8px}
+#tools{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;padding:8px}
+.user-pill{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:14px;background:#ffffff12;border:1px solid var(--line);cursor:pointer;transition:all .2s}
+.user-pill:hover{background:#ffffff22;border-color:var(--a)}
+.user-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--b),var(--purple));color:#fff;font-weight:800;display:grid;place-items:center;font-size:13px}
+.user-info{display:flex;flex-direction:column;line-height:1.2}
+.user-name{font-size:12px;font-weight:700;color:var(--text)}
+.user-role{font-size:10px;color:var(--a);font-weight:600}
+
+#side{position:fixed;left:12px;top:90px;bottom:150px;width:310px;display:flex;flex-direction:column;padding:12px;z-index:12;transition:.25s}#side.hide{transform:translateX(-340px)}
+#q{width:100%;padding:10px 12px 10px 38px;border-radius:12px;border:1px solid var(--line);background:#071827 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23a8bbca" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>') no-repeat 12px center;color:#fff;outline:none;margin-bottom:8px;font-size:13px}
+#q:focus{border-color:var(--a)}
+#chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}#chips button{padding:4px 10px;font-size:12px}
+#list{overflow:auto;flex:1;display:grid;gap:6px;align-content:start}
+.it{display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:12px;background:#ffffff08;border:1px solid transparent;cursor:pointer}.it:hover,.it.sel{border-color:#5eead466;background:#5eead412}
+.num{min-width:26px;height:26px;border-radius:50%;background:var(--y);color:#111;font-weight:900;font-size:12px;display:grid;place-items:center}.num.h{background:#c1121f;color:#fff}.it small{color:var(--muted);display:block;font-size:11px}
+
+#card{position:fixed;right:12px;top:105px;width:340px;max-height:calc(100vh - 220px);overflow-y:auto;padding:14px;z-index:15;display:none}
+#card img.hero{width:100%;height:160px;object-fit:cover;border-radius:12px;margin-bottom:8px;cursor:zoom-in}
+#card h2{margin:0 0 4px;font-size:20px}#card p{color:var(--muted);line-height:1.5;font-size:13px;margin:6px 0}
+.tag{display:inline-block;font-size:11px;padding:3px 9px;border-radius:99px;background:#60a5fa22;color:#93c5fd;margin-bottom:6px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.mini{display:flex;gap:6px;overflow:auto;margin-bottom:8px}.mini img{width:64px;height:48px;object-fit:cover;border-radius:8px;cursor:pointer}
+.nav{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}.nav b{color:#fde68a}
+.route-summary-box{background:#0004;padding:8px 12px;border-radius:10px;border:1px solid var(--line);margin-bottom:8px;font-size:12px;line-height:1.4}
+#x{float:right;padding:2px 9px}
+
+/* TURN-BY-TURN NAVIGATION HUD */
+#navHud{position:fixed;top:90px;left:50%;transform:translateX(-50%);width:min(540px,92vw);padding:14px 18px;z-index:20;display:none;flex-direction:column;gap:10px;animation:slideDown .3s ease-out}
+@keyframes slideDown{from{opacity:0;transform:translate(-50%,-20px)}to{opacity:1;transform:translate(-50%,0)}}
+.nav-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:8px}
+.nav-title{font-weight:800;font-size:15px;color:var(--a);display:flex;align-items:center;gap:8px}
+.nav-step-box{display:flex;align-items:center;gap:14px;background:#ffffff0a;padding:12px;border-radius:14px;border:1px solid var(--line)}
+.nav-step-icon{font-size:32px;line-height:1}
+.nav-step-details b{display:block;font-size:15px;color:#fff}
+.nav-step-details small{color:var(--muted);font-size:12px}
+.nav-metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center}
+.metric-box{background:#0004;padding:8px;border-radius:10px;border:1px solid var(--line)}
+.metric-box small{display:block;font-size:10px;color:var(--muted)}
+.metric-box b{font-size:14px;color:var(--y)}
+.nav-controls{display:flex;gap:8px;justify-content:center;margin-top:4px}
+.nav-steps-list{max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding-right:4px;margin-top:4px}
+.step-item{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-radius:8px;background:#ffffff05;font-size:12px}
+.step-item.active{background:#5eead422;border:1px solid #5eead466;color:var(--a)}
+
+#gal{position:fixed;left:12px;right:12px;bottom:12px;padding:10px 12px;z-index:12;transition:.25s}#gal.hide{transform:translateY(calc(100% + 20px))}
+#gal h3{margin:0 0 6px;font-size:13px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+#strip{display:flex;gap:9px;overflow-x:auto}.th{flex:0 0 140px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}.th:hover{border-color:var(--a)}
+.th img{width:100%;height:78px;object-fit:cover;display:block}.th span{display:block;font-size:11px;padding:5px 7px;color:#dbe8f2;height:34px;overflow:hidden}
+
+#tip{position:fixed;pointer-events:none;padding:6px 10px;border-radius:9px;background:#000c;font-size:12px;font-weight:700;display:none;z-index:25;border:1px solid var(--line)}
+#lb{position:fixed;inset:0;background:#000d;z-index:100;display:none;place-items:center;padding:20px}#lb.show{display:grid}#lb .box{max-width:min(1100px,96vw);text-align:center}
+#lb img{max-width:100%;max-height:76vh;border-radius:14px}#lb p{margin:10px 0;font-weight:700}#lb .row{justify-content:center}
+#load{position:fixed;inset:0;background:#000;z-index:150;display:grid;place-items:center;transition:opacity .8s;text-align:center}
+#comp{position:fixed;right:14px;bottom:150px;width:60px;height:60px;border-radius:50%;z-index:16;display:grid;place-items:center;cursor:pointer;transition:transform .2s}
+#comp:hover{transform:scale(1.08)}
+#needle{width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:26px solid #f87171;position:relative}#needle b{position:absolute;top:-18px;left:-4px;font-size:11px}
+
+/* MODAL & DIALOG SYSTEM */
+.modal-overlay{position:fixed;inset:0;background:#030b14c9;backdrop-filter:blur(12px);z-index:200;display:none;place-items:center;padding:20px;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal-card{width:min(500px,96vw);padding:24px;position:relative;max-height:85vh;overflow-y:auto}
+.modal-card h2{margin:0 0 6px;font-size:22px;color:var(--text);display:flex;align-items:center;gap:10px}
+.modal-card p.subtitle{color:var(--muted);font-size:13px;margin:0 0 16px}
+.modal-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px}
+.modal-close:hover{color:#fff}
+.input-group{margin-bottom:14px}
+.input-group label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px}
+.input-group input,.input-group select{width:100%;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#071827;color:#fff;outline:none;font-size:14px}
+.input-group input:focus,.input-group select:focus{border-color:var(--a)}
+
+.tab-nav{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:16px;padding-bottom:8px}
+.tab-btn{background:none;border:none;color:var(--muted);padding:6px 12px;border-radius:8px;font-size:13px;cursor:pointer}
+.tab-btn.active{background:#ffffff15;color:var(--a);font-weight:700}
+
+.demo-users{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.demo-card{padding:10px;border-radius:12px;background:#ffffff08;border:1px solid var(--line);cursor:pointer;display:flex;align-items:center;gap:10px;transition:all .2s}
+.demo-card:hover{border-color:var(--a);background:#5eead415}
+.demo-card .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--a),var(--b));color:#03101a;font-weight:900;display:grid;place-items:center}
+.demo-card b{display:block;font-size:13px;color:#fff}.demo-card small{color:var(--muted);font-size:10px}
+
+.table-wrap{overflow-x:auto;max-height:300px;border:1px solid var(--line);border-radius:12px}
+table.history-table{width:100%;border-collapse:collapse;font-size:12px;text-align:left}
+table.history-table th,table.history-table td{padding:10px 12px;border-bottom:1px solid var(--line)}
+table.history-table th{background:#071827;color:var(--muted);font-weight:700;position:sticky;top:0}
+table.history-table tr:hover{background:#ffffff08}
+.badge{padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;display:inline-block}
+.badge.student{background:#3b82f633;color:#93c5fd}
+.badge.faculty{background:#a855f733;color:#d8b4fe}
+.badge.admin{background:#ef444433;color:#fca5a5}
+.badge.visitor{background:#10b98133;color:#6ee7b7}
+
+/* OFFICIAL CAMPUS MAP INTERACTIVE MODAL */
+#mapModalContent{width:min(900px,96vw);max-height:90vh;display:flex;flex-direction:column;gap:12px}
+#mapCanvasContainer{width:100%;height:460px;background:#071827;border-radius:14px;border:1px solid var(--line);position:relative;overflow:hidden}
+
+@media(max-width:820px){#side{width:260px}#card{width:calc(100% - 24px);top:auto;bottom:160px;max-height:40%}.brand small{display:none}.demo-users{grid-template-columns:1fr}}
+</style></head><body>
+<div id="load"><div><h2 style="color:#ccc;font-weight:400">Building 3D Smart Campus…</h2></div></div>
+<canvas id="c"></canvas>
+
+<!-- TOP TOOLBAR & USER BADGE -->
+<div id="top">
+  <div class="glass brand">
+    <div class="mark">JU</div>
+    <div><b>Joy University • 3D Smart Campus</b><small>Raja Nagar, Vadakangulam, Tirunelveli – 627116, Tamil Nadu</small></div>
+  </div>
+  <div id="topRight">
+    <div class="glass user-pill" id="userBadge" onclick="openProfile()">
+      <div class="user-avatar" id="uAvatar">AK</div>
+      <div class="user-info">
+        <span class="user-name" id="uName">Alex Kumar</span>
+        <span class="user-role" id="uRole">Student • CSE</span>
+      </div>
+    </div>
+    <div class="glass" id="tools">
+      <button id="bList">☰ Places</button>
+      <button id="bTour">🎬 Tour</button>
+      <button id="bOrbit">🔄 Orbit</button>
+      <button id="bTop">🛰 Top</button>
+      <button id="bReset">🏠 Reset</button>
+      <button id="bNight">🌙 Night</button>
+      <button id="bLab" class="on">🔢 Markers</button>
+      <button id="bAccess" onclick="toggleAccessMode()">♿ Wheelchair</button>
+      <button id="bGal">📸 Photos</button>
+      <button id="bMap">🗺 Official map</button>
+      <button id="bWalk">🚶 Walk route</button>
+      <button id="bHist">📜 History</button>
+      <button id="bShare">🔗 Share</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIDE PANEL & CARD -->
+<div id="side" class="glass"><input id="q" placeholder="Search block, hostel, sports, parking…"><div id="chips"></div><div id="list"></div></div>
+<div id="card" class="glass"></div>
+
+<!-- LIVE TURN-BY-TURN NAVIGATION HUD -->
+<div id="navHud" class="glass">
+  <div class="nav-header">
+    <div class="nav-title"><span>🚶</span> <span id="navDestName">Navigating to Block</span></div>
+    <button class="danger" style="padding:2px 8px;font-size:11px" onclick="stopNavigation()">Stop Nav</button>
+  </div>
+  <div class="nav-step-box">
+    <div class="nav-step-icon" id="navIcon">⬆️</div>
+    <div class="nav-step-details">
+      <b id="navCurrentStepText">Proceed straight down Main Avenue</b>
+      <small id="navNextStepSub">Next turn in 40 meters</small>
+    </div>
+  </div>
+  <div class="nav-metrics">
+    <div class="metric-box"><small>DISTANCE LEFT</small><b id="navDistLeft">0 m</b></div>
+    <div class="metric-box"><small>ESTIMATED TIME</small><b id="navEtaLeft">00:00</b></div>
+    <div class="metric-box"><small>WALK SPEED</small><b id="navSpeedVal">1.3 m/s</b></div>
+  </div>
+  <div class="nav-controls">
+    <button id="bNavPlay" onclick="toggleNavPause()">⏸️ Pause</button>
+    <button id="bNavSpeed" onclick="cycleNavSpeed()">⏩ 1x Speed</button>
+    <button onclick="toggleStepList()">📜 View Steps</button>
+  </div>
+  <div class="nav-steps-list" id="navStepsList" style="display:none"></div>
+</div>
+
+<div id="comp" class="glass" title="Click to align North"><div id="needle"><b>N</b></div></div>
+<div id="gal" class="glass"><h3><span>📸 Campus photos — click to open, then “Show in 3D”</span><button id="gClose" style="padding:3px 10px">▾</button></h3><div id="strip"></div></div>
+<div id="tip"></div>
+<div id="lb"><div class="box"><img id="lbi"><p id="lbt"></p><div class="row"><button id="lp">◀</button><button id="l3" class="pri">🧊 Show in 3D</button><button id="ln">▶</button><button id="lx">✕ Close</button></div></div></div>
+
+<!-- OFFICIAL MAP MODAL -->
+<div class="modal-overlay" id="mapModal">
+  <div class="glass modal-card" id="mapModalContent">
+    <button class="modal-close" onclick="closeOfficialMap()">✕</button>
+    <h2>🗺 Official Joy University Campus Map</h2>
+    <p class="subtitle">Schematic layout of 32 academic blocks, hostels, sports turfs & parking zones.</p>
+    <div id="mapCanvasContainer">
+      <canvas id="officialMapCanvas" style="width:100%;height:100%;display:block"></canvas>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <small style="color:var(--muted)">Click any block on the map to navigate to it in 3D.</small>
+      <button class="pri" onclick="closeOfficialMap()">Close Map</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOGIN MODAL -->
+<div class="modal-overlay" id="loginModal">
+  <div class="glass modal-card">
+    <h2>🔐 Sign in to Joy Campus</h2>
+    <p class="subtitle">Access campus 3D navigation, save bookmarks & track history.</p>
+    
+    <label style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px;display:block">QUICK DEMO ACCOUNTS</label>
+    <div class="demo-users">
+      <div class="demo-card" onclick="quickLogin('Alex Kumar','alex@joy.edu.in','Student','JU2024-CSE-042','Computer Science')">
+        <div class="avatar">AK</div>
+        <div><b>Alex Kumar</b><small>Student • CSE</small></div>
+      </div>
+      <div class="demo-card" onclick="quickLogin('Dr. Sarah Lin','sarah@joy.edu.in','Faculty','FAC-9021','AI & HPC Labs')">
+        <div class="avatar" style="background:linear-gradient(135deg,var(--b),var(--purple))">SL</div>
+        <div><b>Dr. Sarah Lin</b><small>Faculty • AI Lab</small></div>
+      </div>
+      <div class="demo-card" onclick="quickLogin('Admin Security','admin@joy.edu.in','Admin','ADM-001','Campus Operations')">
+        <div class="avatar" style="background:linear-gradient(135deg,#f43f5e,#fb923c)">AD</div>
+        <div><b>Campus Admin</b><small>Security & Ops</small></div>
+      </div>
+      <div class="demo-card" onclick="quickLogin('Guest Visitor','guest@visitor.org','Visitor','VIS-8890','General Guest')">
+        <div class="avatar" style="background:linear-gradient(135deg,#10b981,#3b82f6)">GV</div>
+        <div><b>Guest Visitor</b><small>Campus Visitor</small></div>
+      </div>
+    </div>
+    
+    <div style="text-align:center;color:var(--muted);font-size:11px;margin:12px 0">— OR CUSTOM SIGN IN —</div>
+    
+    <form onsubmit="handleCustomLogin(event)">
+      <div class="input-group">
+        <label>Full Name</label>
+        <input type="text" id="loginName" required placeholder="e.g. Rahul Sharma">
+      </div>
+      <div class="input-group">
+        <label>Email or Registration No.</label>
+        <input type="text" id="loginId" required placeholder="e.g. rahul@joy.edu.in">
+      </div>
+      <div class="input-group">
+        <label>Role</label>
+        <select id="loginRole">
+          <option value="Student">Student</option>
+          <option value="Faculty">Faculty</option>
+          <option value="Admin">Admin</option>
+          <option value="Visitor">Visitor</option>
+        </select>
+      </div>
+      <button type="submit" class="pri" style="width:100%;justify-content:center;padding:12px">Login / Enter Campus</button>
+    </form>
+  </div>
+</div>
+
+<!-- USER PROFILE MODAL -->
+<div class="modal-overlay" id="profileModal">
+  <div class="glass modal-card">
+    <button class="modal-close" onclick="closeProfile()">✕</button>
+    <h2>👤 User Profile</h2>
+    <p class="subtitle">Your active session and campus settings.</p>
+    
+    <form onsubmit="handleSaveProfile(event)">
+      <div class="input-group">
+        <label>Full Name</label>
+        <input type="text" id="profName" required>
+      </div>
+      <div class="input-group">
+        <label>ID / Email</label>
+        <input type="text" id="profId" required>
+      </div>
+      <div class="input-group">
+        <label>Role</label>
+        <select id="profRole">
+          <option value="Student">Student</option>
+          <option value="Faculty">Faculty</option>
+          <option value="Admin">Admin</option>
+          <option value="Visitor">Visitor</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label>Department / Office</label>
+        <input type="text" id="profDept" placeholder="e.g. School of Engineering">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button type="submit" class="pri" style="flex:1;justify-content:center">Save Changes</button>
+        <button type="button" class="danger" onclick="logoutUser()">Logout</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- HISTORY AUDIT LOG MODAL -->
+<div class="modal-overlay" id="historyModal">
+  <div class="glass modal-card" style="width:min(680px,96vw)">
+    <button class="modal-close" onclick="closeHistory()">✕</button>
+    <h2>📜 Campus History & Audit Logs</h2>
+    <p class="subtitle">Complete record of user logins and navigation activity.</p>
+    
+    <div class="tab-nav">
+      <button class="tab-btn active" id="tabLogin" onclick="switchHistTab('login')">🔑 Login History</button>
+      <button class="tab-btn" id="tabNav" onclick="switchHistTab('nav')">🚶 Navigation History</button>
+    </div>
+    
+    <div id="secLoginHist">
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr><th>Timestamp</th><th>User</th><th>Role</th><th>ID / Email</th><th>Status</th></tr>
+          </thead>
+          <tbody id="loginHistBody"></tbody>
+        </table>
+      </div>
+    </div>
+    
+    <div id="secNavHist" style="display:none">
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr><th>Time</th><th>User</th><th>From</th><th>To Destination</th><th>Distance</th></tr>
+          </thead>
+          <tbody id="navHistBody"></tbody>
+        </table>
+      </div>
+    </div>
+    
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
+      <button class="danger" onclick="clearHistoryLogs()" style="font-size:12px">🗑 Clear History</button>
+      <button class="sec" onclick="exportHistoryLogs()" style="font-size:12px">📥 Export JSON</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const PH=n=>`photos/photo_${String(n).padStart(2,'0')}.jpg`;
+const ADDR="Joy University, Raja Nagar, Vadakangulam, Tamil Nadu 627116";
+const MAPS=q=>"https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(q+" "+ADDR);
+
+/* ---------- ACCESSIBILITY MODE TOGGLE ---------- */
+let ACCESSIBLE_MODE = false;
+function toggleAccessMode(){
+  ACCESSIBLE_MODE = !ACCESSIBLE_MODE;
+  $("bAccess").classList.toggle("on", ACCESSIBLE_MODE);
+  $("bAccess").innerHTML = ACCESSIBLE_MODE ? "♿ Ramp Mode ON" : "♿ Wheelchair";
+  if(CUR != null) updateRoute(CUR);
+}
+window.toggleAccessMode = toggleAccessMode;
+
+/* ---------- CANVAS PROCEDURAL IMAGE FALLBACK GENERATOR ---------- */
+function getFallbackImageDataURL(idx, title) {
+  const c = document.createElement("canvas");
+  c.width = 800; c.height = 500;
+  const g = c.getContext("2d");
+  
+  const gr = g.createLinearGradient(0,0,800,500);
+  gr.addColorStop(0, "#0b1c2b");
+  gr.addColorStop(1, "#1e3a8a");
+  g.fillStyle = gr; g.fillRect(0,0,800,500);
+  
+  if (idx === 27) {
+    g.fillStyle = "#071827"; g.fillRect(20,20,760,460);
+    g.strokeStyle = "#5eead4"; g.lineWidth = 3; g.strokeRect(30,30,740,440);
+    g.fillStyle = "#fbbf24"; g.font = "bold 24px sans-serif";
+    g.fillText("JOY UNIVERSITY - OFFICIAL CAMPUS MAP", 50, 70);
+    g.fillStyle = "#a8bbca"; g.font = "14px sans-serif";
+    g.fillText("32 Academic Blocks, Hostels, Sports Turfs & Parking", 50, 95);
+    
+    const mapBlocks = [
+      [60,130,180,80,"#3b82f6","1. Admin Block"], [260,130,180,80,"#60a5fa","2. Gino Block"],
+      [460,130,140,80,"#38bdf8","13. Joe Block AI Lab"], [620,130,140,90,"#ef4444","21. SAC Domes"],
+      [60,240,240,100,"#22c55e","18. Cricket Ground"], [320,240,240,100,"#10b981","23. Football Turf"],
+      [580,240,180,100,"#a855f7","24. JU Arena"], [60,360,200,80,"#ec4899","Hostels (A-D)"],
+      [280,360,200,80,"#f43f5e","Hostels (E-F)"], [500,360,260,80,"#eab308","Parking (31-32)"]
+    ];
+    mapBlocks.forEach(b => {
+      g.fillStyle = b[4]; g.fillRect(b[0],b[1],b[2],b[3]);
+      g.strokeStyle = "#ffffff"; g.lineWidth = 1; g.strokeRect(b[0],b[1],b[2],b[3]);
+      g.fillStyle = "#ffffff"; g.font = "bold 13px sans-serif";
+      g.fillText(b[5], b[0]+10, b[1]+b[3]/2+4);
+    });
+  } else {
+    g.fillStyle = "#5eead422"; g.beginPath(); g.arc(400,200,100,0,7); g.fill();
+    g.fillStyle = "#5eead4"; g.font = "bold 70px sans-serif"; g.textAlign = "center";
+    g.fillText("🏛️", 400, 220);
+    g.fillStyle = "#ffffff"; g.font = "bold 22px sans-serif"; g.textAlign = "center";
+    g.fillText(title, 400, 340);
+    g.fillStyle = "#a8bbca"; g.font = "14px sans-serif";
+    g.fillText("Joy University 3D Smart Campus • Tirunelveli", 400, 375);
+  }
+  return c.toDataURL("image/jpeg");
+}
+
+/* ---------- DATA & BUILDINGS ---------- */
+const PHOTOS=[
+ {i:25,t:"Aerial view of Joy University campus",b:null},{i:0,t:"Gino Block with the ‘Joy University’ entrance sign",b:2},
+ {i:5,t:"Gino Block – front façade",b:2},{i:1,t:"JU Arena",b:24},{i:17,t:"Student Activity Centre (SAC) dome building",b:21},
+ {i:14,t:"Student Activity Centre – entrance",b:21},{i:6,t:"Arul Block (red) & SAC skyline",b:14},{i:9,t:"Arul Block beside the basketball court",b:14},
+ {i:10,t:"Joe Block – Intel Unnati • NEC AI/HPC Labs",b:13},{i:18,t:"Joe Block with Eiffel-style tower",b:13},{i:13,t:"Soosai-B Block – School of Nursing",b:4},
+ {i:2,t:"Aircraft display in front of the academic block",b:null},{i:4,t:"Aeronautical display & AI/ML screen block",b:null},{i:3,t:"“We Trust in God” plaza",b:null},
+ {i:15,t:"Joy University signage building",b:null},{i:16,t:"Joy University logo wall",b:null},{i:12,t:"“Ignites Passion” campus mural",b:null},
+ {i:7,t:"Volleyball court with wind turbines",b:null},{i:8,t:"Basketball court",b:null},{i:27,t:"Official campus map (32 blocks + hostels)",b:null}];
+const D="Block on the official Joy University campus map.";
+/* [id,name,type,mapX,mapY,w,d,h,photos[],description] */
+const BLOCKS=[
+ [1,"Administrative Block","g",620,355,14,5,8,[],"Main administrative block at the heart of the campus."],
+ [2,"Gino Block","w",336,380,14,4.5,7,[5,0],"White block with a perforated façade; the ‘Joy University’ entrance sign stands in front."],
+ [3,"Soosai-A Block","w",225,355,9,3.5,7,[],D],[4,"Soosai-B Block","w",260,330,9,3.5,7,[13],"School of Nursing is signed on this block."],
+ [5,"Selvam Block","w",272,298,5,3,6,[],D],[6,"St. Lourdes Chapel","c",352,290,4,4,5,[],"Chapel beside the central lawn."],
+ [7,"Adhikaram Block","w",372,262,10,3,6,[],D],[8,"S.A. Raja Memorial Block","w",398,238,4,3,6,[],D],
+ [9,"Gnana Prakasam Block","w",378,214,4,3,6,[],D],[10,"Annam Block","w",440,208,6,3,6,[],D],
+ [11,"Grace Block","w",528,240,4,3,6,[],D],[12,"Celin Block","w",516,268,3,3,6,[],D],
+ [13,"Joe Block","o",500,292,4.6,4.6,7,[10,18],"Round glass block topped by an Eiffel-style tower. Intel Unnati • NEC AI/HPC Labs."],
+ [14,"Arul Block","r",548,282,4.5,3,7,[9,6],"Red block beside the basketball court."],
+ [15,"S.A. Raja Convention Hall","w",562,254,4,3,5,[],"Convention hall."],[16,"Pushpam Block","w",573,228,3,3,6,[],D],
+ [17,"Muthuraj Block","w",587,203,5,3,6,[],D],[18,"Cricket Ground","gr",724,196,18,18,.2,[],"Cricket ground."],
+ [19,"Francis Block","w",750,226,8,3.5,6,[],D],[20,"Store & Maintenance","s",712,252,5,3,3,[],"Stores and maintenance."],
+ [21,"Student Activity Centre (SAC)","sac",745,275,9,5,9,[17,14,6],"Glass & dark-brown façade with twin domes. Food, recreation and student services."],
+ [22,"Manickam Block","w",902,272,8,3.5,6,[],D],[23,"Football Turf","ft",982,296,15,10,.2,[],"Football turf."],
+ [24,"JU Arena","a",1104,318,16,9,9,[1],"Large arena hall with a silver wave-pattern glass façade."],
+ [25,"Joshua Block","w",940,385,10,4,7,[],D],[26,"Joveena Block","w",1000,405,8,4,7,[],D],[27,"Julliana Block","w",940,472,10,5,7,[],D],
+ [28,"Security Office","s",818,512,3,2.5,3,[],"Security office."],[29,"Waiting Hall","s",742,514,4,3,3,[],"Waiting hall (default start point)."],
+ [30,"Canteen","s",768,577,5,3,3,[],"Canteen."],[31,"Outside Parking","pk",285,605,16,8,.2,[],"Outside parking."],[32,"Inside Parking","pk",255,432,10,6,.2,[],"Inside parking."],
+ ["A","Sophia Hostel","h",70,432,8,4,7,[],"Hostel."],["B","Green Field Residence","h",155,296,7,4,6,[],"Residence."],
+ ["C","Green Field Studio","h",130,270,5,3.5,5,[],"Studio."],["D","Cicily Hostel","h",195,248,9,4,7,[],"Hostel."],
+ ["E","Theresa Hostel","h",610,242,6,4,6,[],"Hostel."],["F","Devasahayam Hostel","h",1133,358,8,4,7,[],"Hostel."]];
+const CAT=b=>typeof b[0]==="string"?"Hostels":[18,23,24].includes(b[0])?"Sports":[6,15,20,21,28,29,30,31,32].includes(b[0])?"Services":"Blocks";
+const getCatIcon=b=>b[0]===6?"⛪":b[0]===30?"🍴":b[0]===1?"🏛️":[18,23,24].includes(b[0])?"⚽":typeof b[0]==="string"?"🏠":[20,28,29,31,32].includes(b[0])?"🚗":"🎓";
+const wx=px=>(px-600)/6, wz=py=>(py-390)/5.2;
+const bOf=id=>BLOCKS.find(b=>b[0]===id);
+
+/* ---------- USER & LOGIN HISTORY STORE ---------- */
+let currentUser = JSON.parse(localStorage.getItem("ju_user") || '{"name":"Alex Kumar","id":"alex@joy.edu.in","role":"Student","dept":"Computer Science"}');
+let loginHistory = JSON.parse(localStorage.getItem("ju_login_hist") || "[]");
+let navHistory = JSON.parse(localStorage.getItem("ju_nav_hist") || "[]");
+
+function saveUserSession(user){
+  currentUser = user;
+  localStorage.setItem("ju_user", JSON.stringify(user));
+  updateUserUI();
+  const entry = {
+    time: new Date().toLocaleString(),
+    name: user.name,
+    role: user.role,
+    id: user.id,
+    device: navigator.userAgent.includes("Mobile")?"Mobile Phone":"Desktop Web Browser",
+    status: "Active Session"
+  };
+  loginHistory.unshift(entry);
+  localStorage.setItem("ju_login_hist", JSON.stringify(loginHistory));
+}
+
+function updateUserUI(){
+  $("uName").textContent = currentUser.name;
+  $("uRole").textContent = currentUser.role + (currentUser.dept ? " • " + currentUser.dept : "");
+  const initials = currentUser.name.split(" ").map(n=>n[0]).join("").substring(0,2).toUpperCase();
+  $("uAvatar").textContent = initials || "JU";
+}
+
+function quickLogin(name, id, role, reg, dept){
+  saveUserSession({name, id, role, reg, dept});
+  $("loginModal").style.display = "none";
+}
+
+function handleCustomLogin(e){
+  e.preventDefault();
+  const name = $("loginName").value;
+  const id = $("loginId").value;
+  const role = $("loginRole").value;
+  saveUserSession({name, id, role, dept:"General Campus"});
+  $("loginModal").style.display = "none";
+}
+
+function openProfile(){
+  $("profName").value = currentUser.name;
+  $("profId").value = currentUser.id;
+  $("profRole").value = currentUser.role;
+  $("profDept").value = currentUser.dept || "";
+  $("profileModal").style.display = "grid";
+}
+function closeProfile(){$("profileModal").style.display = "none"}
+
+function handleSaveProfile(e){
+  e.preventDefault();
+  currentUser.name = $("profName").value;
+  currentUser.id = $("profId").value;
+  currentUser.role = $("profRole").value;
+  currentUser.dept = $("profDept").value;
+  localStorage.setItem("ju_user", JSON.stringify(currentUser));
+  updateUserUI();
+  closeProfile();
+}
+
+function logoutUser(){
+  closeProfile();
+  $("loginModal").style.display = "grid";
+}
+
+function openHistory(){
+  renderHistoryTables();
+  $("historyModal").style.display = "grid";
+}
+function closeHistory(){$("historyModal").style.display = "none"}
+
+function switchHistTab(tab){
+  $("tabLogin").classList.toggle("active", tab==='login');
+  $("tabNav").classList.toggle("active", tab==='nav');
+  $("secLoginHist").style.display = tab==='login' ? "block" : "none";
+  $("secNavHist").style.display = tab==='nav' ? "block" : "none";
+}
+
+function renderHistoryTables(){
+  const lb = $("loginHistBody");
+  lb.innerHTML = loginHistory.map(h=>`<tr>
+    <td>${h.time}</td>
+    <td><b>${h.name}</b></td>
+    <td><span class="badge ${h.role.toLowerCase()}">${h.role}</span></td>
+    <td>${h.id}</td>
+    <td><span style="color:var(--green)">${h.status}</span></td>
+  </tr>`).join("") || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">No login history found</td></tr>';
+
+  const nb = $("navHistBody");
+  nb.innerHTML = navHistory.map(n=>`<tr>
+    <td>${n.time}</td>
+    <td><b>${n.user}</b></td>
+    <td>${n.from}</td>
+    <td><b>${n.to}</b></td>
+    <td>${n.dist}</td>
+  </tr>`).join("") || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">No navigation records yet</td></tr>';
+}
+
+function recordNavHistory(fromName, toName, distFormatted){
+  const rec = {
+    time: new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),
+    user: currentUser.name,
+    from: fromName,
+    to: toName,
+    dist: distFormatted
+  };
+  navHistory.unshift(rec);
+  if(navHistory.length > 50) navHistory.pop();
+  localStorage.setItem("ju_nav_hist", JSON.stringify(navHistory));
+}
+
+function clearHistoryLogs(){
+  if(confirm("Clear all login and navigation history?")){
+    loginHistory = [];
+    navHistory = [];
+    localStorage.removeItem("ju_login_hist");
+    localStorage.removeItem("ju_nav_hist");
+    renderHistoryTables();
+  }
+}
+
+function exportHistoryLogs(){
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({loginHistory, navHistory}, null, 2));
+  const dlAnchor = document.createElement('a');
+  dlAnchor.setAttribute("href", dataStr);
+  dlAnchor.setAttribute("download", `Joy_University_Campus_History_${Date.now()}.json`);
+  document.body.appendChild(dlAnchor);
+  dlAnchor.click();
+  dlAnchor.remove();
+}
+
+/* ---------- OFFICIAL MAP VIEWER ---------- */
+function openOfficialMap() {
+  $("mapModal").style.display = "grid";
+  drawOfficialMapCanvas();
+}
+function closeOfficialMap() {
+  $("mapModal").style.display = "none";
+}
+
+function drawOfficialMapCanvas() {
+  const canvas = $("officialMapCanvas");
+  canvas.width = canvas.clientWidth || 800;
+  canvas.height = canvas.clientHeight || 460;
+  const ctx = canvas.getContext("2d");
+  
+  ctx.fillStyle = "#06121d";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  
+  ctx.strokeStyle = "#ffffff08"; ctx.lineWidth = 1;
+  for(let x=0; x<canvas.width; x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke()}
+  for(let y=0; y<canvas.height; y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke()}
+  
+  BLOCKS.forEach(b => {
+    const scaleX = canvas.width / 1250;
+    const scaleY = canvas.height / 650;
+    const x = b[3] * scaleX;
+    const y = b[4] * scaleY;
+    const w = Math.max(20, b[5] * 3.5 * scaleX);
+    const h = Math.max(16, b[6] * 3.5 * scaleY);
+    
+    ctx.fillStyle = typeof b[0] === 'string' ? "#c1121f" : [18,23,24].includes(b[0]) ? "#10b981" : "#3b82f6";
+    ctx.fillRect(x - w/2, y - h/2, w, h);
+    ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 1;
+    ctx.strokeRect(x - w/2, y - h/2, w, h);
+    
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(b[0]), x, y);
+  });
+}
+
+window.quickLogin = quickLogin;
+window.handleCustomLogin = handleCustomLogin;
+window.openProfile = openProfile;
+window.closeProfile = closeProfile;
+window.handleSaveProfile = handleSaveProfile;
+window.logoutUser = logoutUser;
+window.openHistory = openHistory;
+window.closeHistory = closeHistory;
+window.switchHistTab = switchHistTab;
+window.clearHistoryLogs = clearHistoryLogs;
+window.exportHistoryLogs = exportHistoryLogs;
+window.openOfficialMap = openOfficialMap;
+window.closeOfficialMap = closeOfficialMap;
+
+/* ---------- THREE.JS SCENE ---------- */
+const canvas=$("c");
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);
+renderer.outputEncoding=THREE.sRGBEncoding;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
+const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0xbfe0ff,.0026);
+const cam=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,.5,1500);cam.position.set(0,85,135);
+const controls=new THREE.OrbitControls(cam,canvas);controls.enableDamping=true;controls.dampingFactor=.07;
+controls.maxPolarAngle=Math.PI*.485;controls.minDistance=8;controls.maxDistance=260;controls.autoRotateSpeed=.6;
+const hemi=new THREE.HemisphereLight(0xdff1ff,0x4b6b3a,.85);scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffffff,1.15);sun.position.set(70,100,50);sun.castShadow=true;
+sun.shadow.mapSize.set(4096,4096);Object.assign(sun.shadow.camera,{left:-130,right:130,top:90,bottom:-90,near:10,far:400});sun.shadow.bias=-.0004;scene.add(sun);
+const skyU={top:{value:new THREE.Color(0x2a8cff)},bot:{value:new THREE.Color(0xd5ecff)}};
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(900,32,16),new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,fog:false,uniforms:skyU,
+ vertexShader:"varying vec3 v;void main(){v=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
+ fragmentShader:"uniform vec3 top;uniform vec3 bot;varying vec3 v;void main(){float h=clamp(v.y*1.5+.08,0.,1.);gl_FragColor=vec4(mix(bot,top,pow(h,.7)),1.);}"})));
+const stars=(()=>{const g=new THREE.BufferGeometry(),p=[];for(let i=0;i<900;i++){const a=Math.random()*6.283,e=Math.random()*1.3+.1,r=800;p.push(Math.cos(a)*Math.cos(e)*r,Math.sin(e)*r,Math.sin(a)*Math.cos(e)*r)}
+ g.setAttribute("position",new THREE.Float32BufferAttribute(p,3));const m=new THREE.Points(g,new THREE.PointsMaterial({color:0xffffff,size:2.2,sizeAttenuation:false,transparent:true,opacity:0,fog:false}));scene.add(m);return m})();
+const std=(c,o={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:.7},o));
+function box(w,h,d,mat,x=0,y=0,z=0){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;return m}
+function flat(w,d,mat,x,y,z){const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);m.rotation.x=-Math.PI/2;m.position.set(x,y,z);m.receiveShadow=true;scene.add(m);return m}
+function grassTex(){const c=document.createElement("canvas");c.width=c.height=256;const g=c.getContext("2d");g.fillStyle="#5c9a3d";g.fillRect(0,0,256,256);
+ for(let i=0;i<2600;i++){g.fillStyle=`hsl(${90+Math.random()*30},${45+Math.random()*20}%,${30+Math.random()*16}%)`;g.fillRect(Math.random()*256,Math.random()*256,2,3)}
+ const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(60,40);t.encoding=THREE.sRGBEncoding;return t}
+flat(320,220,std(0xffffff,{map:grassTex(),roughness:1}),0,0,0);flat(2000,2000,std(0x78a955,{roughness:1}),0,-.2,0);
+const roads=[];
+function road(x1,y1,x2,y2,wpx,color=0x4a4f57){const a=[wx(x1),wz(y1)],b=[wx(x2),wz(y2)],w=Math.abs(b[0]-a[0])+wpx/6,d=Math.abs(b[1]-a[1])+wpx/5.2,cx=(a[0]+b[0])/2,cz=(a[1]+b[1])/2;
+ flat(w,d,std(color,{roughness:.9}),cx,.06,cz);roads.push([cx,cz,w,d])}
+road(560,440,680,490,10,0xb9b3a4);
+flat(22,11,std(0x62b043,{roughness:1}),wx(400),.05,wz(340));
+function court(px,py,w,d){flat(w,d,std(0xc4262e,{roughness:.6}),wx(px),.09,wz(py));const l=flat(w*.94,d*.9,new THREE.MeshBasicMaterial({color:0xffffff,wireframe:true}),wx(px),.11,wz(py));l.receiveShadow=false}
+court(640,330,6,5);court(680,330,6,5);court(870,330,5,4);
+
+/* ---------- BUILDINGS ---------- */
+const winMats=[],emis=[];let NIGHT=false;
+function winCanvas(wall,glass,night){const c=document.createElement("canvas");c.width=c.height=256;const g=c.getContext("2d");g.fillStyle=night?"#000":wall;g.fillRect(0,0,256,256);
+ for(let r=0;r<2;r++)for(let k=0;k<4;k++){const x=k*64+10,y=r*128+34;
+  if(night){g.fillStyle=(Math.sin(k*7+r*3)+1)>.55?"#ffd98a":"#000";g.fillRect(x,y,44,52)}
+  else{const gr=g.createLinearGradient(x,y,x+44,y+52);gr.addColorStop(0,glass);gr.addColorStop(1,"#0b1d3a");g.fillStyle=gr;g.fillRect(x,y,44,52);g.fillStyle="#ffffff30";g.fillRect(x,y,44,8)}}
+ const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.encoding=THREE.sRGBEncoding;t.anisotropy=4;return t}
+function sideMat(wall,glass,len,h){const m=new THREE.MeshStandardMaterial({map:winCanvas(wall,glass,false),emissiveMap:winCanvas(wall,glass,true),emissive:0xffffff,emissiveIntensity:NIGHT?1:0,roughness:.75});
+ m.map.repeat.set(Math.max(1,len/6.4),Math.max(1,h/4.8));m.emissiveMap.repeat.copy(m.map.repeat);winMats.push(m);return m}
+const pick=[],nodes={};
+function tag(o,id){o.traverse(x=>{if(x.isMesh){x.userData.id=id;pick.push(x)}})}
+function blockBox(w,d,h,wall,glass){const roof=std(0xdedede,{roughness:.9}),bot=std(0x999999,{roughness:.9});
+ const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),[sideMat(wall,glass,d,h),sideMat(wall,glass,d,h),roof,bot,sideMat(wall,glass,w,h),sideMat(wall,glass,w,h)]);
+ b.position.y=h/2;b.castShadow=b.receiveShadow=true;return b}
+function build(b){const [id,name,type,px,py,w,d,h]=b;const g=new THREE.Group();g.position.set(wx(px),0,wz(py));let top=h;
+ if("wrch".includes(type)&&type.length===1){
+  const wall=type==="r"?"#d9512c":type==="h"?"#dfe6ff":"#f1f3f6",glass=type==="r"?"#1d3f9a":"#5d7fb0";g.add(blockBox(w,d,h,wall,glass));
+  const pc=type==="r"?0xd9512c:type==="h"?0x3651c9:0x4257c7;for(let x=-w/2+.4;x<=w/2;x+=Math.max(2.4,w/6))g.add(box(.4,h,.5,std(pc),x,h/2,d/2+.2));
+  g.add(box(w+.3,.4,d+.3,std(0xcfd3da),0,h+.2,0));
+  if(type==="c"){const r=new THREE.Mesh(new THREE.ConeGeometry(Math.max(w,d)*.75,3,4),std(0x9b3b2e));r.rotation.y=Math.PI/4;r.position.y=h+1.7;r.castShadow=true;g.add(r);
+   g.add(box(.25,2,.25,std(0xf5c542),0,h+4.2,0));g.add(box(1.1,.25,.25,std(0xf5c542),0,h+4.6,0));top=h+5}
+ }else if(type==="g"){const gm=std(0x1d3f7a,{metalness:.6,roughness:.15,emissive:0x0a1a3a,emissiveIntensity:0});emis.push(gm);
+  g.add(box(w,h,d,gm,0,h/2,0));for(let y=0;y<=h;y+=2.7)g.add(box(w+.4,.3,d+.4,std(0xf2f4f8),0,y+.2,0));g.add(box(w*.3,3,d*.8,std(0xeeeeee),0,h+1.5,0));top=h+3;
+ }else if(type==="sac"){g.add(box(w,h,d,std(0x5a4a45,{metalness:.3,roughness:.3}),0,h/2,0));
+  const gl=std(0x274a7d,{metalness:.7,roughness:.1,emissive:0x1a2a4a,emissiveIntensity:0});emis.push(gl);g.add(box(w*.9,h*.7,d+.15,gl,0,h*.45,0));
+  for(let y=0;y<=h;y+=3)g.add(box(w+.5,.5,d+.6,std(0xf4f4f4),0,y+.3,0));
+  for(const s of[-1,1]){const dm=new THREE.Mesh(new THREE.SphereGeometry(d*.5,20,10,0,6.283,0,1.57),std(0xf4f4f4));dm.scale.set(1.4,.6,1);dm.position.set(s*w*.32,h,0);dm.castShadow=true;g.add(dm)}top=h+3;
+ }else if(type==="o"){const r=w/2;const base=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h*.42,32),std(0xd7dfea));base.position.y=h*.21;base.castShadow=true;g.add(base);
+  const gm=std(0x1740c9,{metalness:.7,roughness:.12,emissive:0x0a1a5a,emissiveIntensity:0});emis.push(gm);
+  const up=new THREE.Mesh(new THREE.CylinderGeometry(r+.2,r+.2,h*.5,32),gm);up.position.y=h*.67;up.castShadow=true;g.add(up);
+  const rf=new THREE.Mesh(new THREE.CylinderGeometry(r+.35,r+.35,.35,32),std(0xe8e0a0));rf.position.y=h*.92+.2;g.add(rf);
+  const tw=new THREE.Mesh(new THREE.ConeGeometry(1.3,9,4),std(0xd8433c,{transparent:true,opacity:.5}));tw.rotation.y=Math.PI/4;tw.position.y=h+4.6;g.add(tw);
+  const tw2=new THREE.Mesh(new THREE.ConeGeometry(1.3,9,4,1,true),std(0xd8433c,{side:THREE.DoubleSide,wireframe:true}));tw2.rotation.y=Math.PI/4;tw2.position.y=h+4.6;g.add(tw2);top=h+9.5;
+ }else if(type==="a"){g.add(box(w,h,d,std(0x1d2230),0,h/2,0));
+  const fg=std(0x2a4f9a,{metalness:.8,roughness:.08,emissive:0x0a1a3a,emissiveIntensity:0});emis.push(fg);g.add(box(w*.42,h*1.2,.6,fg,w*.12,h*.6,d/2+.1));
+  for(let i=0;i<14;i++)g.add(box(.18,h*1.25,.3,std(0xe8edf5,{metalness:.6}),w*.12-w*.2+i*(w*.4/14),h*.62,d/2+.5));
+  const rf=new THREE.Mesh(new THREE.CylinderGeometry(d*.6,d*.6,w,24,1,false,0,Math.PI),std(0xcfd6e0,{side:THREE.DoubleSide}));rf.rotation.z=Math.PI/2;rf.rotation.y=Math.PI/2;rf.position.y=h;rf.castShadow=true;g.add(rf);top=h+5;
+ }else if(type==="gr"){const m=new THREE.Mesh(new THREE.CircleGeometry(w/2,48),std(0x6dc04a,{roughness:1}));m.rotation.x=-Math.PI/2;m.position.y=.08;m.receiveShadow=true;g.add(m);
+  const r=new THREE.Mesh(new THREE.RingGeometry(w/2-.4,w/2,48),new THREE.MeshBasicMaterial({color:0xffffff,side:THREE.DoubleSide}));r.rotation.x=-Math.PI/2;r.position.y=.1;g.add(r);top=1;
+ }else if(type==="ft"){const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d),std(0x3f9d3a,{roughness:1}));m.rotation.x=-Math.PI/2;m.position.y=.08;g.add(m);
+  const l=new THREE.Mesh(new THREE.PlaneGeometry(w*.94,d*.9),new THREE.MeshBasicMaterial({color:0xffffff,wireframe:true}));l.rotation.x=-Math.PI/2;l.position.y=.1;g.add(l);
+  for(const s of[-1,1]){g.add(box(.2,2.2,.2,std(0xffffff),s*w/2,1.1,-1.2));g.add(box(.2,2.2,.2,std(0xffffff),s*w/2,1.1,1.2));g.add(box(.2,.2,2.6,std(0xffffff),s*w/2,2.2,0))}top=2;
+ }else if(type==="pk"){g.add(box(w,.15,d,std(0x62666e),0,.08,0));const cols=[0xdd3333,0x3399cc,0xeeeeee,0x222222,0xffcc33,0x33aa55];
+  for(let i=0;i<Math.floor(w/1.8);i++)for(let j=0;j<Math.floor(d/2.6);j++)if(Math.random()<.65)g.add(box(1.1,.7,1.9,std(cols[(Math.random()*6)|0],{metalness:.5,roughness:.35}),-w/2+1+i*1.8,.5,-d/2+1.3+j*2.6));top=1;
+ }else{g.add(box(w,h,d,std(0xe9dcc4),0,h/2,0));g.add(box(w+.4,.3,d+.4,std(0x8a3f2c),0,h+.15,0))}
+ g.userData.top=top;scene.add(g);nodes[id]=g;
+ g.add(box(w*1.02,Math.max(h,.6),d*1.02,new THREE.MeshBasicMaterial({visible:false}),0,Math.max(h,.6)/2,0));tag(g,id)}
+BLOCKS.forEach(build);
+
+/* ---------- ROAD NETWORK & PATHFINDING ---------- */
+const ROADS=[
+ [[100,225],[290,225]],[[100,225],[100,395],[100,522]],[[290,395],[100,395]],
+ [[290,192],[290,225],[290,330],[290,395],[290,430],[290,522]],[[290,192],[470,192],[640,192]],
+ [[470,192],[470,330]],[[640,192],[640,330]],[[290,330],[470,330],[560,330],[640,330],[830,330],[1040,330]],
+ [[560,330],[560,430]],[[290,430],[560,430],[620,430],[830,430],[1040,430],[1133,430],[1133,380]],
+ [[1040,330],[1040,430]],[[620,385],[620,430],[620,522],[620,600]],[[100,522],[290,522],[340,522],[620,522],[830,522]],
+ [[340,522],[340,600]],[[340,600],[620,600],[830,600]],[[830,190],[830,330],[830,430],[830,522],[830,600]]];
+const RW=2.6;
+const roadTex=(()=>{const c=document.createElement("canvas");c.width=128;c.height=64;const g=c.getContext("2d");g.fillStyle="#454a52";g.fillRect(0,0,128,64);
+ g.fillStyle="#f2f2f2";g.fillRect(0,4,128,3);g.fillRect(0,57,128,3);g.fillStyle="#f6c343";g.fillRect(0,29,64,6);
+ const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=8;t.encoding=THREE.sRGBEncoding;return t})();
+const walkMat=std(0xcfc7b4,{roughness:1});
+const gNodes=[],gAdj=[],gKey=new Map();
+function gNode(px,py){const k=Math.round(px)+","+Math.round(py);if(gKey.has(k))return gKey.get(k);const i=gNodes.length;gNodes.push(new THREE.Vector3(wx(px),0,wz(py)));gAdj.push([]);gKey.set(k,i);return i}
+function gEdge(a,b){const w=gNodes[a].distanceTo(gNodes[b]);gAdj[a].push([b,w]);gAdj[b].push([a,w])}
+ROADS.forEach(pl=>{for(let i=0;i<pl.length-1;i++){const [x1,y1]=pl[i],[x2,y2]=pl[i+1];
+ const A=new THREE.Vector3(wx(x1),0,wz(y1)),B=new THREE.Vector3(wx(x2),0,wz(y2)),L=A.distanceTo(B),horiz=Math.abs(B.x-A.x)>=Math.abs(B.z-A.z);
+ const g=new THREE.Group();g.position.set((A.x+B.x)/2,.072,(A.z+B.z)/2);g.rotation.y=horiz?0:Math.PI/2;
+ const sw=new THREE.Mesh(new THREE.PlaneGeometry(L+RW+1.4,RW+1.4),walkMat);sw.rotation.x=-Math.PI/2;sw.receiveShadow=true;g.add(sw);
+ const tx=roadTex.clone();tx.needsUpdate=true;tx.repeat.set((L+RW)/5,1);
+ const rd=new THREE.Mesh(new THREE.PlaneGeometry(L+RW,RW),std(0xffffff,{map:tx,roughness:.9}));rd.rotation.x=-Math.PI/2;rd.position.y=.006;rd.receiveShadow=true;g.add(rd);scene.add(g);
+ roads.push([g.position.x,g.position.z,horiz?L+RW:RW,horiz?RW:L+RW]);
+ const n=Math.max(1,Math.ceil(L/7));let prev=gNode(x1,y1);
+ for(let k=1;k<=n;k++){const cur=gNode(x1+(x2-x1)*k/n,y1+(y2-y1)*k/n);gEdge(prev,cur);prev=cur}}});
+const bNode={};
+BLOCKS.forEach(b=>{const id=b[0],p=nodes[id].position;let best=0,bd=1e9;
+ gNodes.forEach((n,i)=>{const d=Math.hypot(n.x-p.x,n.z-p.z);if(d<bd){bd=d;best=i}});bNode[id]=best;
+ const q=gNodes[best],dx=p.x-q.x,dz=p.z-q.z,L2=Math.hypot(dx,dz);if(L2<.5)return;
+ const g=new THREE.Group();g.position.set((p.x+q.x)/2,.073,(p.z+q.z)/2);g.rotation.y=-Math.atan2(dz,dx);
+ const m=new THREE.Mesh(new THREE.PlaneGeometry(L2,1.1),walkMat);m.rotation.x=-Math.PI/2;g.add(m);scene.add(g)});
+function findPath(a,b){const s=bNode[a],t=bNode[b],N=gNodes.length,dist=new Array(N).fill(1e9),prev=new Array(N).fill(-1),done=new Array(N).fill(false);dist[s]=0;
+ for(let it=0;it<N;it++){let u=-1;for(let i=0;i<N;i++)if(!done[i]&&(u<0||dist[i]<dist[u]))u=i;if(u<0||dist[u]>=1e9)break;done[u]=true;if(u===t)break;
+  gAdj[u].forEach(([v,w])=>{if(dist[u]+w<dist[v]){dist[v]=dist[u]+w;prev[v]=u}})}
+ if(dist[t]>=1e9)return null;const idx=[];for(let u=t;u>=0;u=prev[u])idx.unshift(u);
+ const pa=nodes[a].position,pb=nodes[b].position,P=[pa.clone().setY(.7)];idx.forEach(i=>P.push(gNodes[i].clone().setY(.7)));P.push(pb.clone().setY(.7));
+ return{P,len:dist[t]+pa.distanceTo(gNodes[s])+pb.distanceTo(gNodes[t])}}
+
+/* ---------- MARKERS & ENVIRONMENT ---------- */
+const markers=new THREE.Group();scene.add(markers);
+function markerTex(t,hostel){const c=document.createElement("canvas");c.width=c.height=128;const g=c.getContext("2d");
+ g.beginPath();g.arc(64,64,58,0,7);g.fillStyle=hostel?"#c1121f":"#fbbf24";g.fill();g.lineWidth=6;g.strokeStyle="#fff";g.stroke();
+ g.fillStyle=hostel?"#fff":"#111";g.font="bold 64px Arial";g.textAlign="center";g.textBaseline="middle";g.fillText(String(t),64,68);const tx=new THREE.CanvasTexture(c);tx.encoding=THREE.sRGBEncoding;return tx}
+BLOCKS.forEach(b=>{const id=b[0],nd=nodes[id];const s=new THREE.Sprite(new THREE.SpriteMaterial({map:markerTex(id,typeof id==="string"),depthTest:false,transparent:true}));
+ s.scale.set(3.4,3.4,1);s.position.set(nd.position.x,(nd.userData.top||2)+3,nd.position.z);s.renderOrder=10;s.userData.id=id;pick.push(s);markers.add(s)});
+
+const rects=BLOCKS.map(b=>[wx(b[3]),wz(b[4]),b[5]+5,b[6]+5]);
+const free=(x,z)=>{for(const r of rects)if(Math.abs(x-r[0])<r[2]/2&&Math.abs(z-r[1])<r[3]/2)return false;for(const r of roads)if(Math.abs(x-r[0])<r[2]/2+1.2&&Math.abs(z-r[1])<r[3]/2+1.2)return false;return true};
+const pts=[];let tries=0;while(pts.length<260&&tries++<6000){const x=(Math.random()-.5)*230,z=(Math.random()-.5)*130;if(free(x,z))pts.push([x,z,Math.random()])}
+const trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.22,.32,1,6),std(0x8a6a48),pts.length),crown=new THREE.InstancedMesh(new THREE.SphereGeometry(1,10,8),std(0x2f8f3a,{roughness:.9}),pts.length);
+const M4=new THREE.Matrix4(),Q=new THREE.Quaternion(),Sv=new THREE.Vector3(),Pv=new THREE.Vector3();
+pts.forEach((p,i)=>{const th=2+p[2]*3;Sv.set(1,th,1);Pv.set(p[0],th/2,p[1]);M4.compose(Pv,Q,Sv);trunk.setMatrixAt(i,M4);const r=1.9+p[2];Sv.set(r,r*.9,r);Pv.set(p[0],th+r*.5,p[1]);M4.compose(Pv,Q,Sv);crown.setMatrixAt(i,M4)});
+[trunk,crown].forEach(m=>{m.castShadow=true;scene.add(m)});
+const rotors=[];
+function turbine(x,z,s=1){const g=new THREE.Group();const tw=new THREE.Mesh(new THREE.CylinderGeometry(.35,.6,16,10),std(0xf2f2f2));tw.position.y=8;g.add(tw);g.add(box(1.2,1,2.2,std(0xe6e6e6),0,16.2,0));
+ const rot=new THREE.Group();rot.position.set(0,16.2,1.3);for(let i=0;i<3;i++){const pv=new THREE.Group();pv.rotation.z=i*2.094;pv.add(box(.5,8,.14,std(0xffffff),0,4,0));rot.add(pv)}
+ g.add(rot);rotors.push(rot);g.position.set(x,0,z);g.scale.setScalar(s);scene.add(g)}
+for(let i=-6;i<=6;i++)turbine(i*22+Math.sin(i)*6,-88-Math.abs(i%3)*10,1.3);for(let i=0;i<5;i++)turbine(105+i*3,-60+i*28,1.1);turbine(-108,20);turbine(-112,-30);
+for(let i=0;i<14;i++){const m=new THREE.Mesh(new THREE.ConeGeometry(30+Math.random()*40,45+Math.random()*50,5),std(0x5d7ea3,{roughness:1}));m.position.set(-450+i*70+Math.random()*30,15,-330-Math.random()*60);scene.add(m)}
+const ct=(()=>{const c=document.createElement("canvas");c.width=c.height=128;const g=c.getContext("2d");const r=g.createRadialGradient(64,64,4,64,64,62);r.addColorStop(0,"#fff");r.addColorStop(1,"#fff0");g.fillStyle=r;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)})();
+const clouds=[];for(let i=0;i<22;i++){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:ct,transparent:true,opacity:.75,depthWrite:false,fog:false}));const k=40+Math.random()*60;s.scale.set(k*1.8,k*.7,1);s.position.set((Math.random()-.5)*600,110+Math.random()*60,-200+Math.random()*300);scene.add(s);clouds.push(s)}
+
+const RZ=wz(522),lampM=new THREE.MeshStandardMaterial({color:0xfff2c8,emissive:0xffd58a,emissiveIntensity:0}),glows=[],cars=[];
+for(let x=-70;x<=36;x+=9){const p=new THREE.Mesh(new THREE.CylinderGeometry(.12,.16,4.5,6),std(0x333a44));p.position.set(x,2.25,RZ-2.4);p.castShadow=true;scene.add(p);
+ const bulb=new THREE.Mesh(new THREE.SphereGeometry(.35,10,8),lampM);bulb.position.set(x,4.6,RZ-2.4);scene.add(bulb);
+ const gl=new THREE.Sprite(new THREE.SpriteMaterial({map:ct,color:0xffd58a,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false,opacity:0}));gl.scale.set(6,6,1);gl.position.copy(bulb.position);scene.add(gl);glows.push(gl)}
+for(let i=0;i<7;i++){const c=box(2,.7,1.1,std([0xdd3333,0x3399cc,0xeeeeee,0xffcc33][i%4],{metalness:.5,roughness:.35}),-70+i*15,.5,RZ+(i%2?.6:-.6));c.userData.v=(.05+Math.random()*.05)*(i%2?1:-1);scene.add(c);cars.push(c)}
+
+/* ---------- CAMERA FLY & RING ---------- */
+const ring=new THREE.Mesh(new THREE.RingGeometry(1,1.25,48),new THREE.MeshBasicMaterial({color:0x5eead4,side:THREE.DoubleSide,transparent:true,opacity:.9,depthTest:false}));ring.rotation.x=-Math.PI/2;ring.position.y=.3;ring.visible=false;ring.renderOrder=9;scene.add(ring);
+let fly=null,CUR=null;const clock=new THREE.Clock();
+const flyTo=(p,t,d=1.6)=>{fly={p0:cam.position.clone(),t0:controls.target.clone(),p1:p,t1:t,s:clock.elapsedTime,d}};
+const HOME=[new THREE.Vector3(0,85,135),new THREE.Vector3(0,0,0)];
+function flyBlock(id){const nd=nodes[id],t=nd.position.clone();t.y=(nd.userData.top||4)*.4;const dir=cam.position.clone().sub(controls.target);dir.y=0;if(dir.lengthSq()<1)dir.set(0,0,1);dir.normalize();
+ const dist=Math.max(22,bOf(id)[5]*1.4);flyTo(t.clone().add(dir.multiplyScalar(dist)).add(new THREE.Vector3(0,dist*.55,0)),t)}
+
+/* ---------- COMPASS NEEDLE CLICK TO RE-ORIENT NORTH ---------- */
+$("comp").onclick = () => flyTo(new THREE.Vector3(controls.target.x, controls.target.y + 160, controls.target.z + 0.1), controls.target.clone());
+
+/* ---------- 3D AVATAR CHARACTER FOR LIVE NAVIGATION ---------- */
+const avatarGroup = new THREE.Group();
+const avatarMesh = box(.8, 1.4, .8, std(0x5eead4, {metalness:.8, roughness:.2}), 0, .7, 0);
+const avatarHead = new THREE.Mesh(new THREE.SphereGeometry(.4, 16, 12), std(0xfbbf24, {roughness:.3}));
+avatarHead.position.y = 1.7;
+const avatarGlow = new THREE.Mesh(new THREE.RingGeometry(.8, 1.4, 32), new THREE.MeshBasicMaterial({color:0x5eead4, side:THREE.DoubleSide, transparent:true, opacity:.75, depthTest:false}));
+avatarGlow.rotation.x = -Math.PI/2;
+avatarGlow.position.y = .05;
+avatarGroup.add(avatarMesh, avatarHead, avatarGlow);
+avatarGroup.visible = false;
+scene.add(avatarGroup);
+
+/* ---------- ROUTING & LIVE TURN-BY-TURN ENGINE ---------- */
+const SCALE_M=2.5,WALK_MS=1.3,CARD8=["N","NE","E","SE","S","SW","W","NW"],ARW=["↑","↗","→","↘","↓","↙","←","↖"];
+let START=29,routeLen=0;const navG=new THREE.Group();scene.add(navG);let curve=null,flow=[];
+const fmt=m=>m>=1000?(m/1000).toFixed(2)+" km":Math.round(m)+" m";
+function dirInfo(a,b){const dx=b.x-a.x,dz=b.z-a.z,deg=(Math.atan2(dx,-dz)*180/Math.PI+360)%360,k=Math.round(deg/45)%8;
+ return{deg:Math.round(deg),card:CARD8[k],arw:ARW[k],straight:Math.hypot(dx,dz)*SCALE_M,walk:(Math.abs(dx)+Math.abs(dz))*SCALE_M}}
+function labelSprite(t,color){const c=document.createElement("canvas");c.width=512;c.height=128;const g=c.getContext("2d");g.fillStyle="#000c";g.fillRect(4,16,504,96);g.fillStyle=color;g.font="bold 44px Arial";g.textAlign="center";g.textBaseline="middle";g.fillText(t,256,66);
+ const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false,transparent:true}));s.scale.set(18,4.5,1);s.renderOrder=30;return s}
+function clearRoute(){[...navG.children].forEach(o=>{navG.remove(o);o.geometry&&o.geometry.dispose();if(o.material){o.material.map&&o.material.map.dispose();o.material.dispose()}});flow=[];curve=null;routeLen=0}
+
+let navLegs = [];
+function updateRoute(id){
+  clearRoute();if(id==null||!nodes[id]||!nodes[START])return;const A=nodes[START].position,B=nodes[id].position;
+  const pin=new THREE.Mesh(new THREE.ConeGeometry(1.2,3.5,16),new THREE.MeshBasicMaterial({color:0x22c55e,depthTest:false}));pin.rotation.x=Math.PI;pin.position.set(A.x,4,A.z);pin.renderOrder=30;navG.add(pin);
+  const st=labelSprite("YOU ARE HERE • "+bOf(START)[1],"#86efac");st.position.set(A.x,9,A.z);navG.add(st);if(id===START)return;
+  const P=[],fp=findPath(START,id);
+  if(fp){fp.P.forEach(v=>{if(!P.length||P[P.length-1].distanceTo(v)>.05)P.push(v)});routeLen=fp.len}
+  else{const E=new THREE.Vector3(B.x,.7,A.z);[new THREE.Vector3(A.x,.7,A.z),E,new THREE.Vector3(B.x,.7,B.z)].forEach(v=>P.push(v));routeLen=Math.abs(B.x-A.x)+Math.abs(B.z-A.z)}
+  if(P.length<3)P.splice(1,0,P[0].clone().lerp(P[P.length-1],.5));
+  curve=new THREE.CatmullRomCurve3(P,false,"centripetal");
+  const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,400,.35,8),new THREE.MeshBasicMaterial({color:0x5eead4,transparent:true,opacity:.85,depthTest:false}));tube.renderOrder=8;navG.add(tube);
+  for(let i=0;i<14;i++){const d=new THREE.Mesh(new THREE.SphereGeometry(.7,10,8),new THREE.MeshBasicMaterial({color:0xfbbf24,depthTest:false}));d.renderOrder=9;navG.add(d);flow.push(d)}
+  const r=dirInfo(A,B),m=curve.getPointAt(.5),lb=labelSprite(r.arw+" "+r.card+" "+r.deg+"° • "+fmt(routeLen*SCALE_M)+" by road","#fde68a");lb.position.set(m.x,m.y+6,m.z);navG.add(lb);
+  
+  navLegs = [];
+  for(let i=0; i<P.length-1; i++){
+    const legDist = P[i].distanceTo(P[i+1]) * SCALE_M;
+    const dInfo = dirInfo(P[i], P[i+1]);
+    let instruction = `Head ${dInfo.card} towards next junction`;
+    if(i === 0) instruction = `Start at ${bOf(START)[1]} and head ${dInfo.card}`;
+    else if(i === P.length-2) instruction = `Turn towards ${bOf(id)[1]} (Destination)`;
+    navLegs.push({
+      step: i+1,
+      icon: dInfo.arw,
+      text: instruction,
+      distM: Math.round(legDist),
+      pos: P[i]
+    });
+  }
+}
+
+function navHTML(id){if(id===START)return"<p><b>📍 You are here</b> (start point). Click another block for distance and direction.</p>";
+ const r=dirInfo(nodes[START].position,nodes[id].position);
+ return`<div class="route-summary-box"><b>From:</b> ${bOf(START)[1]} ➔ <b>To:</b> ${bOf(id)[1]} ${ACCESSIBLE_MODE?'<span class="badge" style="background:#10b98133;color:#6ee7b7;margin-left:4px">♿ Ramp Route</span>':''}</div>
+ <p><b>${r.arw} ${r.card} (${r.deg}°)</b> direction<br>Straight line: <b>${fmt(r.straight)}</b><br>Walking via roads: <b>${fmt(routeLen*SCALE_M)}</b> ≈ ${Math.max(1,Math.round(routeLen*SCALE_M/WALK_MS/60))} min</p>`}
+
+/* ---------- LIVE ANIMATED NAVIGATION SYSTEM ---------- */
+let isNavigating = false, navProgress = 0, navPaused = false, navSpeedMult = 1;
+function startLiveNavigation(){
+  if(CUR == null || CUR === START){
+    select(24, true);
+  }
+  setTimeout(() => {
+    if(!curve) return;
+    isNavigating = true;
+    navProgress = 0;
+    navPaused = false;
+    navSpeedMult = 1;
+    avatarGroup.visible = true;
+    $("navHud").style.display = "flex";
+    $("navDestName").textContent = bOf(CUR)[1];
+    $("bNavPlay").textContent = "⏸️ Pause";
+    $("bNavSpeed").textContent = "⏩ 1x Speed";
+    
+    recordNavHistory(bOf(START)[1], bOf(CUR)[1], fmt(routeLen*SCALE_M));
+    renderNavStepsList();
+    tour(false);
+  }, 200);
+}
+
+function renderNavStepsList(){
+  const container = $("navStepsList");
+  container.innerHTML = navLegs.map((l,idx)=>`
+    <div class="step-item ${idx===0?'active':''}" id="legStep_${idx}">
+      <span>${l.icon} ${l.text}</span>
+      <b>${l.distM} m</b>
+    </div>
+  `).join("");
+}
+
+function toggleNavPause(){
+  navPaused = !navPaused;
+  $("bNavPlay").textContent = navPaused ? "▶️ Resume" : "⏸️ Pause";
+}
+
+function cycleNavSpeed(){
+  navSpeedMult = navSpeedMult === 1 ? 2 : navSpeedMult === 2 ? 4 : 1;
+  $("bNavSpeed").textContent = `⏩ ${navSpeedMult}x Speed`;
+}
+
+function toggleStepList(){
+  const el = $("navStepsList");
+  el.style.display = el.style.display === "none" ? "flex" : "none";
+}
+
+function stopNavigation(){
+  isNavigating = false;
+  avatarGroup.visible = false;
+  $("navHud").style.display = "none";
+  controls.minDistance = 8;
+  flyTo(HOME[0].clone(), HOME[1].clone());
+}
+
+window.startLiveNavigation = startLiveNavigation;
+window.toggleNavPause = toggleNavPause;
+window.cycleNavSpeed = cycleNavSpeed;
+window.toggleStepList = toggleStepList;
+window.stopNavigation = stopNavigation;
+
+/* ---------- UI & SELECTION ---------- */
+let chip="All";
+["All","Blocks","Hostels","Sports","Services"].forEach(c=>{const b=document.createElement("button");b.textContent=c;if(c==="All")b.classList.add("on");b.onclick=()=>{chip=c;[...$("chips").children].forEach(x=>x.classList.toggle("on",x===b));renderList()};$("chips").appendChild(b)});
+function renderList(){const q=$("q").value.toLowerCase();$("list").innerHTML="";BLOCKS.filter(b=>(chip==="All"||CAT(b)===chip)&&(b[1]+" "+b[0]).toLowerCase().includes(q)).forEach(b=>{
+ const d=document.createElement("div");d.className="it"+(CUR===b[0]?" sel":"");d.innerHTML=`<div class="num ${typeof b[0]==="string"?"h":""}">${b[0]}</div><div><b>${getCatIcon(b)} ${b[1]}</b><small>${CAT(b)}</small></div>`;d.onclick=()=>select(b[0]);$("list").appendChild(d)})}
+$("q").oninput=renderList;
+function select(id,fl=true){const b=bOf(id);if(!b)return;CUR=id;const nd=nodes[id];
+ ring.visible=true;ring.position.x=nd.position.x;ring.position.z=nd.position.z;const r=Math.max(b[5],b[6])*.75+1;ring.scale.set(r,r,r);
+ if(fl)flyBlock(id);updateRoute(id);renderList();
+ const k=b[8].length?PHOTOS.findIndex(p=>p.i===b[8][0]):-1;
+ const heroImgUrl = b[8].length ? PH(b[8][0]) : getFallbackImageDataURL(typeof id==='number'?id:1, b[1]);
+ const hero=`<img class="hero" src="${heroImgUrl}" onclick="openLB(${k<0?0:k})" onerror="this.src=getFallbackImageDataURL(${typeof id==='number'?id:1}, '${b[1]}')">`;
+ const mini=b[8].length>1?`<div class="mini">${b[8].map(i=>`<img src="${PH(i)}" onclick="document.querySelector('#card .hero').src=this.src" onerror="this.src=getFallbackImageDataURL(${i}, 'Photo')">`).join("")}</div>`:"";
+ $("card").style.display="block";
+ $("card").innerHTML=`<button id="x" onclick="deselect()">✕</button>${hero}${mini}<span class="tag">${getCatIcon(b)} ${CAT(b)} • ${typeof id==="string"?"Hostel "+id:"No. "+id}</span><h2>${b[1]}</h2><p>${b[9]}</p>
+ <div class="nav">${navHTML(id)}
+ <div class="row">
+   <button onclick='setStart(${JSON.stringify(id)})'>📍 Set as start</button>
+   <button class="pri" onclick="startLiveNavigation()">🚀 Start 3D Nav</button>
+   <a href="${MAPS(b[1])}" target="_blank" rel="noopener"><button class="sec">🧭 Google Maps</button></a>
+ </div>
+ <p style="font-size:11px;opacity:.75;margin-top:10px">Distances are approximate estimates based on pedestrian campus paths.</p>
+ </div>`}
+function deselect(){CUR=null;ring.visible=false;$("card").style.display="none";clearRoute();renderList()}
+window.select=select;window.deselect=deselect;window.setStart=id=>{START=id;select(id,false)};
+
+/* PHOTO STRIP & LIGHTBOX FIX */
+const strip=$("strip");let LB=0;
+PHOTOS.forEach((p,k)=>{
+  const d=document.createElement("div");
+  d.className="th";
+  const imgUrl = PH(p.i);
+  d.innerHTML=`<img loading="lazy" src="${imgUrl}" onerror="this.src=getFallbackImageDataURL(${p.i}, '${p.t.replace(/'/g,"\\'")}')"><span>${p.t}</span>`;
+  d.onclick=()=>openLB(k);
+  strip.appendChild(d);
+});
+
+function openLB(k){
+  LB=(k+PHOTOS.length)%PHOTOS.length;
+  const p=PHOTOS[LB];
+  const lbi = $("lbi");
+  lbi.src = PH(p.i);
+  lbi.onerror = () => { lbi.src = getFallbackImageDataURL(p.i, p.t); };
+  $("lbt").textContent = p.t;
+  $("l3").style.display = p.b != null ? "" : "none";
+  $("lb").classList.add("show");
+}
+window.openLB=openLB;
+$("lx").onclick=()=>$("lb").classList.remove("show");$("lp").onclick=()=>openLB(LB-1);$("ln").onclick=()=>openLB(LB+1);
+$("l3").onclick=()=>{$("lb").classList.remove("show");select(PHOTOS[LB].b)};$("lb").onclick=e=>{if(e.target.id==="lb")$("lb").classList.remove("show")};
+addEventListener("keydown",e=>{if(!$("lb").classList.contains("show"))return;if(e.key==="Escape")$("lx").click();if(e.key==="ArrowLeft")$("lp").click();if(e.key==="ArrowRight")$("ln").click()});
+$("bList").onclick=()=>$("side").classList.toggle("hide");
+$("bGal").onclick=$("gClose").onclick=()=>$("gal").classList.toggle("hide");
+$("bMap").onclick=openOfficialMap;
+$("bHist").onclick=openHistory;
+$("bOrbit").onclick=e=>{controls.autoRotate=!controls.autoRotate;e.currentTarget.classList.toggle("on",controls.autoRotate)};
+$("bReset").onclick=()=>{deselect();tour(false);stopNavigation();flyTo(HOME[0].clone(),HOME[1].clone())};
+$("bTop").onclick=()=>flyTo(new THREE.Vector3(0,190,.1),new THREE.Vector3(0,0,0));
+$("bLab").onclick=e=>{markers.visible=!markers.visible;e.currentTarget.classList.toggle("on",markers.visible)};
+$("bNight").onclick=e=>{NIGHT=!NIGHT;e.currentTarget.classList.toggle("on",NIGHT);e.currentTarget.textContent=NIGHT?"☀️ Day":"🌙 Night";applyTime()};
+let tourT=null,ti=0;const TOUR=[1,2,4,13,14,21,24,25,27];
+function tour(on){clearInterval(tourT);tourT=null;$("bTour").classList.toggle("on",on);if(!on)return;const go=()=>select(TOUR[ti++%TOUR.length]);go();tourT=setInterval(go,6500)}
+$("bTour").onclick=()=>tour(!tourT);
+
+$("bWalk").onclick=startLiveNavigation;
+$("bShare").onclick=()=>{if(CUR==null){alert("Click a block first.");return}const u=location.origin+location.pathname+"#"+encodeURIComponent(CUR);
+ (navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>alert("Link copied:\n"+u),()=>prompt("Copy this link:",u))};
+function applyTime(){const n=NIGHT;skyU.top.value.set(n?0x020616:0x2a8cff);skyU.bot.value.set(n?0x16284d:0xd5ecff);scene.fog.color.set(n?0x0a1428:0xbfe0ff);scene.fog.density=n?.0032:.0026;
+ hemi.intensity=n?.28:.85;hemi.color.set(n?0x7f97d8:0xdff1ff);sun.intensity=n?.35:1.15;sun.color.set(n?0x8fa8ff:0xffffff);sun.position.set(n?-60:70,100,n?-40:50);
+ stars.material.opacity=n?1:0;renderer.toneMappingExposure=n?1.25:1.05;winMats.forEach(m=>m.emissiveIntensity=n?1:0);emis.forEach(m=>m.emissiveIntensity=n?1.2:0);clouds.forEach(c=>c.material.opacity=n?.15:.75);
+ lampM.emissiveIntensity=n?2:0;glows.forEach(g=>g.material.opacity=n?.9:0)}
+
+/* ---------- PICKING & EVENTS ---------- */
+const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();let down=null;
+function cast(e){mouse.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mouse,cam);
+ const h=ray.intersectObjects(pick.filter(o=>!o.isSprite||markers.visible),false)[0];return h?h.object:null}
+canvas.addEventListener("pointerdown",e=>down=[e.clientX,e.clientY]);
+canvas.addEventListener("pointerup",e=>{if(!down)return;const m=Math.hypot(e.clientX-down[0],e.clientY-down[1]);down=null;if(m>5)return;tour(false);const o=cast(e);if(o)select(o.userData.id)});
+canvas.addEventListener("pointermove",e=>{const o=cast(e),t=$("tip");if(!o){t.style.display="none";canvas.style.cursor="grab";return}
+ const id=o.userData.id,b=bOf(id);let s=(typeof id==="string"?"Hostel ":"#")+id+" • "+b[1];
+ if(id!==START){const r=dirInfo(nodes[START].position,nodes[id].position);s+="  "+r.arw+" "+r.card+" • "+fmt(r.straight)}
+ t.style.display="block";t.style.left=e.clientX+14+"px";t.style.top=e.clientY+12+"px";t.textContent=s;canvas.style.cursor="pointer"});
+controls.addEventListener("start",()=>{controls.autoRotate=false;$("bOrbit").classList.remove("on");fly=null});
+addEventListener("resize",()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+/* ---------- MAIN ANIMATION LOOP ---------- */
+updateUserUI();
+function loop(){
+ requestAnimationFrame(loop);const t=clock.elapsedTime=clock.getElapsedTime();
+ if(fly){const k=Math.min(1,(t-fly.s)/fly.d),e=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2;cam.position.lerpVectors(fly.p0,fly.p1,e);controls.target.lerpVectors(fly.t0,fly.t1,e);if(k>=1)fly=null}
+ 
+ if(isNavigating && curve && !navPaused){
+   navProgress += 0.0015 * navSpeedMult;
+   if(navProgress >= 1){
+     navProgress = 1;
+     isNavigating = false;
+     $("navCurrentStepText").textContent = `Arrived at ${bOf(CUR)[1]}! 🎉`;
+     $("navNextStepSub").textContent = "Destination reached";
+     setTimeout(()=>stopNavigation(), 4000);
+   }
+   const pos = curve.getPointAt(navProgress);
+   const ahead = curve.getPointAt(Math.min(1, navProgress + 0.04));
+   avatarGroup.position.copy(pos);
+   avatarGroup.lookAt(ahead.x, pos.y, ahead.z);
+   
+   cam.position.set(pos.x, 6, pos.z + 12);
+   controls.target.set(ahead.x, 2, ahead.z);
+   
+   const distRemaining = Math.round(routeLen * SCALE_M * (1 - navProgress));
+   const secRemaining = Math.round(distRemaining / (WALK_MS * navSpeedMult));
+   const mins = Math.floor(secRemaining / 60);
+   const secs = secRemaining % 60;
+   
+   $("navDistLeft").textContent = fmt(distRemaining);
+   $("navEtaLeft").textContent = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+   $("navSpeedVal").textContent = (WALK_MS * navSpeedMult).toFixed(1) + " m/s";
+   
+   const legIdx = Math.min(navLegs.length-1, Math.floor(navProgress * navLegs.length));
+   if(navLegs[legIdx]){
+     $("navIcon").textContent = navLegs[legIdx].icon;
+     $("navCurrentStepText").textContent = navLegs[legIdx].text;
+     $("navNextStepSub").textContent = `Next checkpoint in ${navLegs[legIdx].distM} m`;
+     navLegs.forEach((_, i)=>{
+       const el = $(`legStep_${i}`);
+       if(el) el.classList.toggle("active", i === legIdx);
+     });
+   }
+ }
+ 
+ controls.update();
+ 
+ /* DYNAMIC MARKER LEVEL-OF-DETAIL (LOD) CLUSTERING */
+ const camDist = cam.position.distanceTo(controls.target);
+ markers.children.forEach(m => {
+   const d = m.position.distanceTo(cam.position);
+   const baseScale = Math.max(2.4, Math.min(6.5, d * 0.028));
+   if (camDist > 160) {
+     const isMajor = [1, 2, 13, 21, 24, "A", "E"].includes(m.userData.id);
+     m.material.opacity = isMajor ? 1.0 : Math.max(0.15, 1 - (camDist - 160) / 80);
+     m.scale.setScalar(isMajor ? baseScale * 1.2 : baseScale * 0.7);
+   } else {
+     m.material.opacity = 1.0;
+     m.scale.setScalar(baseScale);
+   }
+ });
+ 
+ /* WINDMILL ASYNCHRONOUS ROTATION VARIANCE */
+ rotors.forEach((r,i)=>r.rotation.z += 0.015 + ((i * 7) % 5) * 0.003);
+ 
+ clouds.forEach(c=>{c.position.x+=.03;if(c.position.x>320)c.position.x=-320});
+ cars.forEach(c=>{c.position.x+=c.userData.v;if(c.position.x>40)c.position.x=-75;if(c.position.x<-75)c.position.x=40});
+ if(curve)flow.forEach((d,i)=>d.position.copy(curve.getPointAt((t*.12+i/flow.length)%1)));
+ if(ring.visible){ring.material.opacity=.6+Math.sin(t*4)*.3;ring.rotation.z=t}
+ $("needle").style.transform="rotate("+(controls.getAzimuthalAngle()*180/Math.PI)+"deg)";
+ renderer.render(scene,cam);
+}
+
+renderList();loop();
+{const h=decodeURIComponent(location.hash.slice(1));if(h){const k=/^\d+$/.test(h)?+h:h;setTimeout(()=>{if(nodes[k])select(k)},1700)}}
+setTimeout(()=>{const l=$("load");l.style.opacity=0;setTimeout(()=>l.remove(),900)},1400);
+</script></body></html>
+'''
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *a, **k):
+        super().__init__(*a, directory=str(HERE), **k)
+
+    def do_GET(self):
+        if self.path.split("?")[0] in ("/", "/index.html"):
+            data = HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith("/photos/"):
+            super().do_GET()
+        else:
+            self.send_error(404)
+
+    def log_message(self, *a):
+        pass
+
+
+def free_port(start=8000):
+    for p in range(start, start + 50):
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", p)) != 0:
+                return p
+    return start
+
+
+def lan_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as x:
+            x.connect(("8.8.8.8", 80))
+            return x.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
+def main():
+    extract_photos()
+    if "--export" in sys.argv:
+        (HERE / "index.html").write_text(HTML, encoding="utf-8")
+        print("[+] index.html written. Upload index.html + photos/ folder to Netlify Drop or GitHub Pages.")
+        return
+    port = free_port()
+    host = "0.0.0.0" if "--lan" in sys.argv else "127.0.0.1"
+    url = f"http://127.0.0.1:{port}"
+    srv = ThreadingHTTPServer((host, port), Handler)
+    print(f"\n  Joy University 3D Campus running at  {url}   (Ctrl+C to stop)")
+    if host == "0.0.0.0":
+        print(f"  Phones on same Wi-Fi: http://{lan_ip()}:{port}")
+    threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
+
+if __name__ == "__main__":
+    main()
